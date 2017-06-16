@@ -7,7 +7,6 @@ library(grid)
 library(gridExtra)
 library(reshape2)
 
-# https://stackoverflow.com/questions/11794436/stacking-multiple-plots-vertically-with-the-same-x-axis-but-different-y-axes-in
 
 options(shiny.maxRequestSize=30*1024^2)
 
@@ -28,8 +27,8 @@ theme_individual <- theme_bw() +
         legend.title = element_blank(),
         legend.text = element_text(size=15))
 
-#if (interactive()) {
-  
+ 
+
   ui <- fluidPage(
     # Application title
     titlePanel("MicroAeth AE51 Data Processing"),
@@ -66,11 +65,8 @@ theme_individual <- theme_bw() +
     )
   )
   
-  #header_AE51 <- c("Date",	"Time",	"Ref", "Sen",	"ATN",	"Flow",	"PCB_temp",	"Status",	"Battery", "BC")
-  #test <- read.csv("C:/Users/Qiang/Dropbox (LDEO)/YangQ/BIKE/2016summercolocation/MicroAeth duplicates/BIKE1018_MAE85_S4-1_160810.csv", skip=17, header=F, col.names = header_AE51)
-  #test$timestamp <- as.POSIXct(paste(test$Date, test$Time),format="%Y/%m/%d %H:%M:%S")
-  
-  
+ 
+
   server <- function(input, output) ({
     
     header_AE51 <- c("Date",	"Time",	"Ref", "Sen",	"ATN",	"Flow",	"PCB_temp",	"Status",	"Battery", "BC")
@@ -93,8 +89,6 @@ theme_individual <- theme_bw() +
       
       rawdata <- data.frame(read.csv(infile$datapath, skip=17, header=F, col.names = header_AE51, stringsAsFactors = T))
       rawdata$datetime <- as.POSIXct(paste(rawdata$Date, rawdata$Time))
-      #rawdata$datetime <- as.numeric(as.POSIXct(paste(rawdata$Date, rawdata$Time),format="%Y/%m/%d%H:%M:%S"))
-      #rawdata$timestamp <- as.POSIXct(rawdata$datetime)
       dt.df <- melt(rawdata, measure.vars = c("BC", "ATN"))
       return(list(rawdata = rawdata, meltdata = dt.df))
     })
@@ -102,12 +96,7 @@ theme_individual <- theme_bw() +
     
     
     output$contents <- renderTable({
-      # input$file1 will be NULL initially. After the user selects
-      # and uploads a file, it will be a data frame with 'name',
-      # 'size', 'type', and 'datapath' columns. The 'datapath'
-      # column will contain the local filenames where the data can
-      # be found.
-      Data()$rawdata
+            Data()$rawdata
     })
     
     
@@ -143,12 +132,7 @@ theme_individual <- theme_bw() +
     
     
     output$contents2 <- renderTable({
-      # input$file1 will be NULL initially. After the user selects
-      # and uploads a file, it will be a data frame with 'name',
-      # 'size', 'type', and 'datapath' columns. The 'datapath'
-      # column will contain the local filenames where the data can
-      # be found.
-      dt.df <- melt(Data()$rawdata, measure.vars = c("BC", "ATN"))
+            dt.df <- melt(Data()$rawdata, measure.vars = c("BC", "ATN"))
     })
     
     
