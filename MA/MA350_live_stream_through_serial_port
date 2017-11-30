@@ -1,0 +1,250 @@
+##
+##  This is a Shiny App running on a local laptop for live streaming data from MA350 through a serial-USB cable.
+##
+
+
+# load packages
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(lubridate)
+library(scales)
+library(grid)
+library(gridExtra)
+library(reshape2)
+library(shinythemes)
+library(dplyr)
+library(serial)
+
+
+# request space for large files
+options(shiny.maxRequestSize=30*1024^2)
+
+
+
+##########################
+####  User Interface  ####
+##########################
+
+ui <- shinyServer(fluidPage(theme = shinytheme("cosmo"),
+    # Application title
+    titlePanel("MicroAeth MA350 Data Live Streaming through Serial-USB cable"),
+    h4("v1 @2017-11 by Qiang Yang"),
+
+    sidebarLayout(
+      
+      # side panel 
+      sidebarPanel(
+        textInput(inputId = "project", label = "What's the project ID?", value = "XXXX"),
+        sliderInput(inputId = "timebase", label = "timebase in second", min = 1, max = 60, value = 10),
+        helpText("Note: ")
+                   ),    # end of sidebar Panel
+      
+      
+      # main panel
+      mainPanel(
+        tabsetPanel(
+          
+          tabPanel(title = "Live Plots",
+                   plotlyOutput(outputId = "plot_all", width = "100%", height = "600px")
+                   ),
+          
+          tabPanel(title = "Data Table",
+                   downloadButton(outputId = "download_data", label = "Download data in csv"),
+                   tableOutput("contents")
+                   )
+          
+                   ) # end of tabset panel
+                ) # end of main Panel
+      
+   ) # end of sidebar layout 
+  )# end of fluid page
+)  # end of UI
+  
+
+
+
+###################
+####  Server  #####
+###################
+server <- shinyServer(function(input, output, session){
+  
+  # list ports  
+  port_com <- listPorts()  
+  
+  # set up the connection
+  con <- serialConnection(name = "testcon",
+                        port = port_com,
+                        mode = "1000000,n,8,1",
+                        buffering = "none",
+                        newline = 1,
+                        translation = "cr"
+                        )
+  
+  # test and open connnection
+  if(isOpen(con) == "FALSE") {  open(con)  } 
+#isOpen(con)
+# read.serialConnection(con)
+
+  
+  # get project info  
+    project <- reactive({    input$project    })
+    
+    
+  # get time base
+    timebase <- reactive({ input$timebase })
+  
+    
+##### read in data ##############################################################
+  header <- c("Serial Number","Datum ID","Session ID","Firmware Version","Date Time","GPS Lat","GPS Long","GPS Alt","GPS Speed",
+            "Timebase","Status","Battery","Accel X","Accel Y","Accel Z","Act Comp","Tape Position",
+            "Flow Set","Flow Total","Flow 1","Flow 2","Air Temp","Air RH","Air DP","Int Pr","Int Temp","LEDs",
+            "UV Sen1",  "UV Sen2",  "UV Ref",  "UV ATN1",  "UV ATN2",  "UV K",
+            "Blue Sen1","Blue Sen2","Blue Ref","Blue ATN1","Blue ATN2","Blue K",
+            "Green Sen1","Green Sen2","Green Ref","Green ATN1","Green ATN2","Green K",
+            "Red Sen1","Red Sen2","Red Ref","Red ATN1", "Red ATN2","Red K",
+            "IR Sen1","IR Sen2","IR Ref","IR ATN1","IR ATN2","IR K",
+            "UV BC1","UV BC2","UV BCc",
+            "Blue BC1","Blue BC2","Blue BCc",
+            "Green BC1","Green BC2","Green BCc",
+            "Red BC1","Red BC2","Red BCc",
+            "IR BC1","IR BC2","IR BCc",
+            "CRC")
+      
+            #1-9    MA350-0028,13899,28,261,2017-11-20T19:51:00.00,0.000000000,0.000000000,0,0.00,
+            #10-17  60,66,97,-7,-9,-265,1,26,
+            #18-27  flow 100.00,101.06,65.95,35.10,28.34,16.48,0.00,100452.00,28.56,UV B G R IR ,
+            #28-33  UV 897437,695604,917146,,,0.0005,
+            #34-39  Blue 881787,709479,693793,,,0.0000,
+            #40-45  Green 886254,723666,699330,,,-0.0004,
+            #46-51  Red 888698,752407,767827,,,0.0015,
+            #52-57  IR 715508,733700,928506,,,0.0009,
+            #58-60  UV.BC ,,,
+            #61-63  Blue.BC ,,,
+            #64-66  Green.BC ,,,
+            #67-69  Red.BC ,,,
+            #70-72  IR.BC ,,,
+            #73     CRC
+    
+    
+   
+  # Function to get new observations
+  get_new_data <- function(){
+    new_text <- strsplit(x = read.serialConnection(con), split = ",")[[1]] # read in a new line of raw data in text format every 10 seconds
+    new_text[1] <- sub(pattern = "\n", replacement = "", x = new_text[1]) #remove \n at the beginning of each row
+    new_timestamp <- as.POSIXct(sub(pattern = "T", replacement = " ", x = new_text[5])) - 5*60*60 #correct for local time
+    new_row <- data.frame(Date.Time = as.POSIXct(new_timestamp),
+                          Serial.Number = new_text[1],
+                          Timebase = new_text[10],
+                          #Flow.Total = as.numeric(new_text[19]),
+                          Air.Temp = as.numeric(new_text[22]),
+                          Air.RH = as.numeric(new_text[23]),
+                          #UV.ATN1 = as.numeric(new_text[31]),
+                          IR.ATN1 = as.numeric(new_text[55]),
+                          UV.BC1 = as.numeric(new_text[58]),
+                          #UV.BC2 = as.numeric(new_text[59]),
+                          UV.BCc = as.numeric(new_text[60]),
+                          IR.BC1 = as.numeric(new_text[70]),
+                          #IR.BC2 = as.numeric(new_text[71]),
+                          IR.BCc = as.numeric(new_text[72])
+                      )
+    data_raw <- new_row %>% rbind %>% data.frame
+    return(data_raw)
+  }
+
+  
+  # Initialize my_data
+  my_data <<- get_new_data()
+
+  
+  # Function to update my_data
+  update_data <- function(){
+    my_data <<- rbind(get_new_data(), my_data)
+    my_data <<- subset(my_data, abs(IR.BCc)>=0) #remove NA values
+  }
+
+  
+  # Plot the 30 most recent values
+  output$plot_all <- renderPlotly({
+    print("Render")
+    invalidateLater(timebase()*1000, session)
+    update_data()
+    print(my_data)
+    
+    ## plotly function
+    plotly_grid <- function(df) {
+    title = paste0(project(), "_", my_data$Serial.Number[1] ,"_From_", df$Date.Time[nrow(df)], "_To_", df$Date.Time[1])
+    
+    plot_irbc <- plot_ly(my_data[1:30,], x = ~Date.Time, y = ~IR.BC1/1000, type = "scatter", mode  = "lines", line = list(color ="black")) %>%
+        add_trace(x = ~Date.Time, y = ~IR.BCc/1000, type = "scatter", mode  = "lines", line = list(color ="red")) %>%
+        layout(xaxis = list(tickangle = -0), 
+               yaxis = list(title="IR.BC (ug/m^3)"), 
+               showlegend = F, 
+               font = list(size=10),
+               annotations = list(list(x = 0.3 , y = 0.0, text = "IR.BC1 (ug/m^3)", font = list(size = 12, color = "black"), showarrow = F, xref='paper', yref='paper'),
+                                  list(x = 0.7 , y = 0.0, text = "IR.BCc (ug/m^3)", font = list(size = 12, color = "red"), showarrow = F, xref='paper', yref='paper'))
+              )
+      
+    plot_temp <- plot_ly(data = my_data[1:30,], x = ~Date.Time, y = ~Air.Temp, type = "scatter", mode  = "lines", line = list(color ="green")) %>%
+        layout(yaxis = list(title="Temperature (C)"),
+               showlegend=F, 
+               font = list(size=10),
+               annotations = list(list(x = 0.5 , y = 0.0, text = "Air Temperature (C)", font = list(size = 12, color = "green"), showarrow = F, xref='paper', yref='paper'))
+               )
+      
+    plot_rh <- plot_ly(data = my_data[1:30,], x = ~Date.Time, y = ~Air.RH, type = "scatter", mode  = "lines", line = list(color ="blue")) %>%
+        layout(yaxis = list(title="RH (%)"),
+               showlegend=F, 
+               font = list(size=10),
+               annotations = list(list(x = 0.5 , y = 0.0, text = "Air RH (%)", font = list(size = 12, color = "blue"), showarrow = F, xref='paper', yref='paper'))
+               )
+    
+    plot_iratn1 <- plot_ly(data = my_data[1:30,], x = ~Date.Time, y = ~IR.ATN1, type = "scatter", mode  = "lines", line = list(color ="black")) %>%
+        layout(yaxis = list(title="IR.ATN1"),
+               showlegend=F, 
+               font = list(size=10),
+               annotations = list(list(x = 0.5 , y = 0.0, text = "IR.ATN1", font = list(size = 12, color = "black"), showarrow = F, xref='paper', yref='paper'))
+               )
+    
+    subplot(plot_irbc,
+              plot_temp,
+              plot_rh, 
+              plot_iratn1, 
+              
+              nrows = 4, 
+              heights = c(0.3, 0.2, 0.2, 0.2), 
+              margin = c(0.04, 0.04, 0.01, 0.01), 
+              shareX = T, 
+              titleX = F, 
+              titleY = F) %>% 
+        layout(annotations = list(list(x = 0.5 , y = 1.02, text = title, font = list(size = 16, color = "black"), showarrow = F, xref='paper', yref='paper')))
+    }
+    
+    p <- plotly_grid(my_data)
+    ggplotly(p) %>% layout(margin=list(r=20, l=50, t=20, b=20))
+    
+    }) # end of plotting
+  
+  
+  
+   ### raw data file for display
+    output$contents <- renderTable({
+            invalidateLater(timebase()*1000,session)
+            update_data()
+            my_data[,"Date.Time"] <- as.character(my_data[,"Date.Time"])
+            return(my_data)
+    })
+    
+    
+    ### raw data for download
+    output$download_data <- downloadHandler(
+      filename = function() { paste0(project(), "_", my_data$Serial.Number[1], ".csv") },
+      content = function(file) { write.csv(my_data, file) }
+      )
+  
+})# end of server
+
+
+## run Shiny App
+shinyApp(ui=ui,server=server)
+
